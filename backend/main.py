@@ -21,8 +21,8 @@ from pydantic import BaseModel
 from starlette.requests import Request
 from web3 import Web3
 
-from ai.authenticity import analyze_resume_authenticity
-from ai.matcher import compute_match_score
+from ai.authenticity import analyze_resume
+from ai.matcher import score_fit
 
 load_dotenv()
 
@@ -48,6 +48,7 @@ class VerificationResult(BaseModel):
     student_wallet: str | None
     issued_at_utc: str | None
     match_score_percent: float | None
+    fit_analysis: dict[str, object] | None = None
     content_authenticity: dict[str, object] | None = None
 
 
@@ -361,11 +362,10 @@ def logout(request: Request):
     return templates.TemplateResponse("logout.html", {"request": request})
 
 
-@app.post("/api/verify-and-match", response_model=VerificationResult)
-async def verify_and_match(
+async def _verify_and_match_impl(
     cv_file: UploadFile = File(...),
     job_description: str = Form(...),
-):
+) -> VerificationResult:
     if cv_file.content_type not in {"application/pdf", "application/x-pdf"}:
         raise HTTPException(status_code=400, detail="Only PDF uploads are supported.")
 
@@ -397,6 +397,7 @@ async def verify_and_match(
             student_wallet=None,
             issued_at_utc=None,
             match_score_percent=None,
+            fit_analysis=None,
             content_authenticity=None,
         )
 
@@ -407,8 +408,13 @@ async def verify_and_match(
             detail="Unable to extract text from PDF. Please upload a text-based PDF.",
         )
 
-    score_data = compute_match_score(cv_text, job_description)
-    authenticity_data = analyze_resume_authenticity(cv_text)
+    score_data = score_fit(cv_text, job_description)
+    authenticity_data = analyze_resume(
+        cv_text=cv_text,
+        job_description=job_description,
+        is_blockchain_verified=is_verified,
+        fit_data=score_data,
+    )
 
     issued_dt = datetime.fromtimestamp(issued_at, tz=timezone.utc)
 
@@ -419,8 +425,25 @@ async def verify_and_match(
         student_wallet=student_wallet,
         issued_at_utc=issued_dt.isoformat(),
         match_score_percent=score_data["score_percent"],
+        fit_analysis=score_data,
         content_authenticity=authenticity_data,
     )
+
+
+@app.post("/api/verify-and-match", response_model=VerificationResult)
+async def verify_and_match(
+    cv_file: UploadFile = File(...),
+    job_description: str = Form(...),
+):
+    return await _verify_and_match_impl(cv_file=cv_file, job_description=job_description)
+
+
+@app.post("/verify", response_model=VerificationResult)
+async def verify_alias(
+    cv_file: UploadFile = File(...),
+    job_description: str = Form(...),
+):
+    return await _verify_and_match_impl(cv_file=cv_file, job_description=job_description)
 
 
 @app.get("/api/health")
@@ -430,35 +453,41 @@ def health_check() -> dict[str, str]:
 
 @app.get("/api/demo", response_model=VerificationResult)
 def demo() -> VerificationResult:
-    """Returns a pre-computed demo verification result for quick showcasing."""
+    """Returns a computed demo verification result using the same scoring pipeline."""
+    demo_cv_text = (
+        "Rashi Kumar\n"
+        "Education\n"
+        "NSUT, B.Tech in Computer Science, 2028\n"
+        "Experience\n"
+        "Built decentralized verification workflows with Python, FastAPI, and Web3.\n"
+        "Projects\n"
+        "Developed RAG pipeline for CV-to-JD matching with LangChain and PyTorch.\n"
+        "Achievements\n"
+        "Adobe Hackathon Finalist.\n"
+        "Certifications\n"
+        "NVIDIA Deep Learning, JPMorgan Software Engineering.\n"
+        "Contact\n"
+        "rashi@example.com, +91 9999999999\n"
+    )
+    demo_jd_text = (
+        "AI/ML internship role requiring Python, FastAPI, RAG, NLP, Web3 understanding, "
+        "and strong project execution."
+    )
+    demo_fit = score_fit(demo_cv_text, demo_jd_text)
+    demo_auth = analyze_resume(
+        cv_text=demo_cv_text,
+        job_description=demo_jd_text,
+        is_blockchain_verified=True,
+        fit_data=demo_fit,
+    )
+
     return VerificationResult(
         certificate_hash="1ef47f984d8bb5d86ee7bf426c0451ff8f82e3068f61d8cd5a68af9e8a61e864",
         is_verified=True,
         issuer="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
         student_wallet="0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
         issued_at_utc="2026-03-29T11:16:57+00:00",
-        match_score_percent=79.78,
-        content_authenticity={
-            "score_percent": 86.0,
-            "risk_level": "low",
-            "summary": "Strong authenticity signals with consistent timeline and concrete evidence.",
-            "red_flag_count": 0,
-            "checks": [
-                {
-                    "name": "Year Consistency",
-                    "status": "pass",
-                    "details": "Timeline years look plausible.",
-                },
-                {
-                    "name": "Core Sections",
-                    "status": "pass",
-                    "details": "Education and experience sections are present.",
-                },
-                {
-                    "name": "Project Evidence",
-                    "status": "pass",
-                    "details": "Projects include technical/actionable details.",
-                },
-            ],
-        },
+        match_score_percent=demo_fit["score_percent"],
+        fit_analysis=demo_fit,
+        content_authenticity=demo_auth,
     )

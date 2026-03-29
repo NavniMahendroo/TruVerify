@@ -37,7 +37,34 @@ function renderAuthenticity(payload) {
   let html = "";
   html += row("Content Authenticity", `${escapeHtml(auth.score_percent)}%`);
   html += row("Risk Level", escapeHtml(String(auth.risk_level).toUpperCase()));
+  if (auth.candidate_classification) {
+    html += row("Candidate Classification", escapeHtml(auth.candidate_classification));
+  }
+  if (auth.verified_credentials_status) {
+    html += row("Credential Status", escapeHtml(auth.verified_credentials_status));
+  }
   html += row("Credibility Summary", escapeHtml(auth.summary));
+
+  if (Array.isArray(auth.strategic_signals) && auth.strategic_signals.length > 0) {
+    const signalText = auth.strategic_signals
+      .map((signal) => {
+        const label = escapeHtml(signal.label || "Signal");
+        const items = Array.isArray(signal.items) ? signal.items : [];
+        const values = items.length > 0 ? escapeHtml(items.join(", ")) : "None";
+        return `${label}: ${values}`;
+      })
+      .join("<br>");
+    html += row("Strategic Signals", signalText);
+  } else if (auth.strategic_entities) {
+    // Backward compatibility for older payload shape.
+    const fallbackText = Object.entries(auth.strategic_entities)
+      .filter((entry) => Array.isArray(entry[1]) && entry[1].length > 0)
+      .map((entry) => `${escapeHtml(entry[0])}: ${escapeHtml(entry[1].join(", "))}`)
+      .join("<br>");
+    if (fallbackText) {
+      html += row("Strategic Signals", fallbackText);
+    }
+  }
 
   if (Array.isArray(auth.checks) && auth.checks.length > 0) {
     const checksHtml = auth.checks
@@ -46,6 +73,28 @@ function renderAuthenticity(payload) {
     html += row("Credential Checks", checksHtml);
   }
 
+  return html;
+}
+
+function renderFitAnalysis(payload) {
+  const fit = payload.fit_analysis;
+  if (!fit) {
+    return "";
+  }
+
+  let html = "";
+  if (typeof fit.core_competency_score === "number") {
+    html += row("Core Competency", `${escapeHtml(fit.core_competency_score)}%`);
+  }
+  if (typeof fit.culture_fit_bonus === "number") {
+    html += row("Culture Fit Bonus", `+${escapeHtml(fit.culture_fit_bonus)}`);
+  }
+  if (Array.isArray(fit.hard_skills) && fit.hard_skills.length > 0) {
+    html += row("Hard Skills", escapeHtml(fit.hard_skills.join(", ")));
+  }
+  if (Array.isArray(fit.project_evidence) && fit.project_evidence.length > 0) {
+    html += row("Project Evidence", escapeHtml(fit.project_evidence.slice(0, 3).join(" | ")));
+  }
   return html;
 }
 
@@ -143,6 +192,7 @@ form.addEventListener("submit", async (event) => {
       detailHtml += row("Student Wallet", escapeHtml(payload.student_wallet));
       detailHtml += row("Issued (UTC)", escapeHtml(payload.issued_at_utc));
       detailHtml += row("AI Match Score", `${escapeHtml(payload.match_score_percent)}%`);
+      detailHtml += renderFitAnalysis(payload);
       detailHtml += renderAuthenticity(payload);
       statusText.textContent = "Verified and matched successfully.";
     } else {
@@ -219,6 +269,7 @@ Required Skills:
       detailHtml += row("Student Wallet", escapeHtml(payload.student_wallet.substring(0, 16)) + "...");
       detailHtml += row("Issued (UTC)", "2026-03-29T12:23:25+00:00");
       detailHtml += row("AI Match Score", `${escapeHtml(payload.match_score_percent)}%`);
+      detailHtml += renderFitAnalysis(payload);
       detailHtml += renderAuthenticity(payload);
       statusText.textContent = "Demo verified and matched successfully.";
     }
