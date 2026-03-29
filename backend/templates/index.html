@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TruVerify | Decentralized Credential Matching</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="bg-grid" aria-hidden="true"></div>
+    <div class="noise" aria-hidden="true"></div>
+    <div class="orb orb-one" aria-hidden="true"></div>
+    <div class="orb orb-two" aria-hidden="true"></div>
+    <div class="orb orb-three" aria-hidden="true"></div>
+
+    <main class="shell">
+      <header class="hero fade-in">
+        <div>
+          <p class="eyebrow">Decentralized Credential Intelligence</p>
+          <h1>TruVerify</h1>
+          <p class="subtitle">
+            Instant trust check + AI fit scoring for real resumes. Seal once on-chain,
+            verify forever.
+          </p>
+        </div>
+
+        <div class="hero-pills" aria-label="System capabilities">
+          <span>eSeal on Ethereum</span>
+          <span>SHA-256 Integrity</span>
+          <span>SentenceTransformer Match</span>
+        </div>
+      </header>
+
+      <section class="workspace slide-up">
+        <aside class="panel side-card">
+          <h2>Verification Pipeline</h2>
+          <ol class="pipeline">
+            <li>Upload candidate CV PDF</li>
+            <li>Generate deterministic hash</li>
+            <li>Validate eSeal on blockchain</li>
+            <li>Run CV to JD semantic matching</li>
+          </ol>
+
+          <div class="stat-grid">
+            <div class="stat">
+              <p>Trust Source</p>
+              <strong>On-chain</strong>
+            </div>
+            <div class="stat">
+              <p>Hash Type</p>
+              <strong>SHA-256</strong>
+            </div>
+            <div class="stat">
+              <p>AI Model</p>
+              <strong>all-mpnet-base-v2</strong>
+            </div>
+            <div class="stat">
+              <p>Result</p>
+              <strong>0-100%</strong>
+            </div>
+          </div>
+
+          <details class="criteria-box">
+            <summary>Match Score Legend</summary>
+            <div class="criteria-content">
+              <div class="criteria-section">
+                <strong>How to read percentages:</strong>
+                <ul>
+                  <li>0-30%: Bad fit</li>
+                  <li>31-50%: Weak fit</li>
+                  <li>51-65%: Moderate fit</li>
+                  <li>66-80%: Good fit</li>
+                  <li>81-100%: Strong fit</li>
+                </ul>
+              </div>
+              <div class="criteria-section">
+                <strong>Quick interpretation:</strong>
+                <ul>
+                  <li>20-30%: Mostly unrelated resume</li>
+                  <li>50-60%: Some overlap but many gaps</li>
+                  <li>70-80%: Role-aligned and interview ready</li>
+                  <li>90%+: Very high semantic alignment</li>
+                </ul>
+              </div>
+              <p class="criteria-note">Score is semantic similarity (0-100%). Higher means closer CV to JD alignment.</p>
+            </div>
+          </details>
+        </aside>
+
+        <section class="panel form-card">
+          <form id="verify-form" class="form-grid">
+            <div class="field">
+              <label for="cv_file">Verified CV (PDF)</label>
+              <label for="cv_file" id="dropzone" class="dropzone">
+                <input
+                  id="cv_file"
+                  name="cv_file"
+                  type="file"
+                  accept="application/pdf"
+                  required
+                />
+                <span class="drop-title">Drop PDF here or click to browse</span>
+                <span class="drop-sub" id="file-name">No file selected</span>
+              </label>
+            </div>
+
+            <div class="field">
+              <label for="job_description">Target Job Description</label>
+              <textarea
+                id="job_description"
+                name="job_description"
+                rows="8"
+                placeholder="Paste the JD text. TruVerify compares meaning, skills, and role intent against the verified CV."
+                required
+              ></textarea>
+            </div>
+
+            <div class="actions">
+              <button type="submit" class="cta" id="submit-btn">Verify & Match</button>
+              <button type="button" class="cta-alt" id="demo-btn">Try Demo</button>
+              <p id="status-text" class="status-text" aria-live="polite"></p>
+            </div>
+          </form>
+        </section>
+      </section>
+
+      <section id="result" class="panel result hidden" aria-live="polite">
+        <h2>Verification Result</h2>
+        <div class="result-shell">
+          <div class="score-card" id="score-card">
+            <p>AI Match</p>
+            <strong id="score-value">--</strong>
+            <div class="meter">
+              <div class="meter-fill" id="meter-fill"></div>
+            </div>
+          </div>
+
+          <div class="detail-card" id="detail-card"></div>
+        </div>
+      </section>
+
+      <footer class="footer-note">
+        <p>
+          Built for interview-ready demos: transparent trust proofs + explainable semantic fit.
+        </p>
+      </footer>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
