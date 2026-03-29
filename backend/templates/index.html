@@ -20,6 +20,16 @@
     <div class="orb orb-three" aria-hidden="true"></div>
 
     <main class="shell">
+      <nav class="top-nav fade-in" aria-label="Account navigation">
+        <div class="top-nav-left">
+          <span class="signed-in-tag">Signed in as {{ user.full_name }}</span>
+        </div>
+        <div class="top-nav-right">
+          <a href="/settings" class="nav-link">Settings</a>
+          <a href="/logout" class="nav-link">Logout</a>
+        </div>
+      </nav>
+
       <header class="hero fade-in">
         <div>
           <p class="eyebrow">Decentralized Credential Intelligence</p>

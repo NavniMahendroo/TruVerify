@@ -3,15 +3,19 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
+import secrets
+from urllib.parse import quote_plus
 from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 from pypdf import PdfReader
 from pydantic import BaseModel
 from starlette.requests import Request
@@ -28,10 +32,13 @@ ABI_PATH = BASE_DIR / "abi" / "TruVerifySeal.json"
 
 RPC_URL = os.getenv("RPC_URL", "http://127.0.0.1:8545")
 CONTRACT_ADDRESS = os.getenv("CONTRACT_ADDRESS", "")
+APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "dev-secret-change-me")
+AUTH_DB_PATH = BASE_DIR / "auth.db"
 
 app = FastAPI(title="TruVerify API", version="1.0.0")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+app.add_middleware(SessionMiddleware, secret_key=APP_SECRET_KEY, max_age=60 * 60 * 24 * 7)
 
 
 class VerificationResult(BaseModel):
@@ -42,6 +49,99 @@ class VerificationResult(BaseModel):
     issued_at_utc: str | None
     match_score_percent: float | None
     content_authenticity: dict[str, object] | None = None
+
+
+def _db_connection() -> sqlite3.Connection:
+    conn = sqlite3.connect(AUTH_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_auth_db() -> None:
+    with _db_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                full_name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+
+
+def _hash_password(password: str, salt: str | None = None) -> str:
+    real_salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), real_salt.encode("utf-8"), 310000)
+    return f"{real_salt}${digest.hex()}"
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    try:
+        salt, _ = stored.split("$", 1)
+    except ValueError:
+        return False
+    candidate = _hash_password(password, salt)
+    return secrets.compare_digest(candidate, stored)
+
+
+def _create_user(full_name: str, email: str, password: str) -> tuple[bool, str]:
+    normalized_email = email.strip().lower()
+    now_utc = datetime.now(timezone.utc).isoformat()
+    password_hash = _hash_password(password)
+
+    try:
+        with _db_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO users (full_name, email, password_hash, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (full_name.strip(), normalized_email, password_hash, now_utc, now_utc),
+            )
+        return True, "Account created successfully."
+    except sqlite3.IntegrityError:
+        return False, "An account with this email already exists."
+
+
+def _authenticate_user(email: str, password: str) -> sqlite3.Row | None:
+    normalized_email = email.strip().lower()
+    with _db_connection() as conn:
+        row = conn.execute(
+            "SELECT id, full_name, email, password_hash FROM users WHERE email = ?",
+            (normalized_email,),
+        ).fetchone()
+    if not row:
+        return None
+    if not _verify_password(password, row["password_hash"]):
+        return None
+    return row
+
+
+def _current_user(request: Request) -> dict[str, object] | None:
+    user = request.session.get("user")
+    if not user:
+        return None
+    return {"id": int(user.get("id", 0)), "full_name": str(user.get("full_name", "")), "email": str(user.get("email", ""))}
+
+
+def _require_user(request: Request) -> dict[str, object] | None:
+    user = _current_user(request)
+    if not user or not user.get("id"):
+        return None
+    return user
+
+
+def _redirect(path: str, message: str | None = None) -> RedirectResponse:
+    if message:
+        return RedirectResponse(url=f"{path}?message={quote_plus(message)}", status_code=303)
+    return RedirectResponse(url=path, status_code=303)
+
+
+_init_auth_db()
 
 
 def _extract_pdf_text(file_bytes: bytes) -> str:
@@ -110,7 +210,155 @@ def _auto_seal_certificate(w3: Web3, contract: object, cert_hash_hex: str) -> No
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    user = _require_user(request)
+    if not user:
+        return _redirect("/signin", "Please sign in to continue.")
+    return templates.TemplateResponse("index.html", {"request": request, "user": user})
+
+
+@app.get("/signup", response_class=HTMLResponse)
+def signup_page(request: Request):
+    if _current_user(request):
+        return _redirect("/")
+    return templates.TemplateResponse(
+        "signup.html",
+        {
+            "request": request,
+            "error": request.query_params.get("error", ""),
+            "message": request.query_params.get("message", ""),
+        },
+    )
+
+
+@app.post("/signup")
+async def signup_submit(
+    request: Request,
+    full_name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+):
+    if len(password) < 8:
+        return _redirect("/signup", "Password must be at least 8 characters.")
+    if password != confirm_password:
+        return _redirect("/signup", "Passwords do not match.")
+
+    ok, message = _create_user(full_name=full_name, email=email, password=password)
+    if not ok:
+        return _redirect("/signup", message)
+    return _redirect("/signin", "Account created. Please sign in.")
+
+
+@app.get("/signin", response_class=HTMLResponse)
+def signin_page(request: Request):
+    if _current_user(request):
+        return _redirect("/")
+    return templates.TemplateResponse(
+        "signin.html",
+        {
+            "request": request,
+            "error": request.query_params.get("error", ""),
+            "message": request.query_params.get("message", ""),
+        },
+    )
+
+
+@app.post("/signin")
+async def signin_submit(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+):
+    user = _authenticate_user(email=email, password=password)
+    if not user:
+        return _redirect("/signin", "Invalid email or password.")
+
+    request.session["user"] = {
+        "id": int(user["id"]),
+        "full_name": str(user["full_name"]),
+        "email": str(user["email"]),
+    }
+    return _redirect("/")
+
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request):
+    user = _require_user(request)
+    if not user:
+        return _redirect("/signin", "Please sign in to access settings.")
+
+    return templates.TemplateResponse(
+        "settings.html",
+        {
+            "request": request,
+            "user": user,
+            "error": request.query_params.get("error", ""),
+            "message": request.query_params.get("message", ""),
+        },
+    )
+
+
+@app.post("/settings")
+async def settings_submit(
+    request: Request,
+    full_name: str = Form(...),
+    current_password: str = Form(""),
+    new_password: str = Form(""),
+    confirm_new_password: str = Form(""),
+):
+    user = _require_user(request)
+    if not user:
+        return _redirect("/signin", "Please sign in to access settings.")
+
+    with _db_connection() as conn:
+        db_user = conn.execute(
+            "SELECT id, full_name, email, password_hash FROM users WHERE id = ?",
+            (int(user["id"]),),
+        ).fetchone()
+
+    if not db_user:
+        request.session.clear()
+        return _redirect("/signin", "Session expired. Please sign in again.")
+
+    update_password = bool(new_password.strip() or confirm_new_password.strip() or current_password.strip())
+    password_hash = db_user["password_hash"]
+
+    if update_password:
+        if not _verify_password(current_password, db_user["password_hash"]):
+            return _redirect("/settings", "Current password is incorrect.")
+        if len(new_password) < 8:
+            return _redirect("/settings", "New password must be at least 8 characters.")
+        if new_password != confirm_new_password:
+            return _redirect("/settings", "New passwords do not match.")
+        password_hash = _hash_password(new_password)
+
+    cleaned_name = full_name.strip()
+    if not cleaned_name:
+        return _redirect("/settings", "Full name cannot be empty.")
+
+    now_utc = datetime.now(timezone.utc).isoformat()
+    with _db_connection() as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET full_name = ?, password_hash = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (cleaned_name, password_hash, now_utc, int(user["id"])),
+        )
+
+    request.session["user"] = {
+        "id": int(db_user["id"]),
+        "full_name": cleaned_name,
+        "email": str(db_user["email"]),
+    }
+    return _redirect("/settings", "Settings updated successfully.")
+
+
+@app.get("/logout", response_class=HTMLResponse)
+def logout(request: Request):
+    request.session.clear()
+    return templates.TemplateResponse("logout.html", {"request": request})
 
 
 @app.post("/api/verify-and-match", response_model=VerificationResult)
