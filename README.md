@@ -1,13 +1,26 @@
 # TruVerify
 
-TruVerify is a decentralized credential verification and AI semantic matching system.
+TruVerify is a blockchain-backed credential verification and AI recruiter-assist platform.
 
-## What this includes
+It combines:
 
-- **eSeal Layer (Blockchain):** Solidity contract that stores immutable SHA-256 certificate hashes with issuer, student wallet, and UTC timestamp.
-- **Match Engine (AI):** Python module using `SentenceTransformer` (`all-mpnet-base-v2`) and PyTorch cosine similarity.
-- **Integration Layer:** FastAPI app that uploads a PDF CV, computes SHA-256, verifies the eSeal on-chain via Web3.py, then computes AI match score against a job description.
-- **Frontend:** Modern, responsive UI served by FastAPI.
+- On-chain eSeal verification (SHA-256 hash against smart contract ledger)
+- Resume-to-role fit scoring with PyTorch + SentenceTransformers
+- Role-aware strategic signal extraction with spaCy
+- Session-based auth pages (Sign Up, Sign In, Settings, Logout)
+
+## Features
+
+- Blockchain verification:
+  Hashes uploaded PDF and verifies it against `TruVerifySeal` on-chain.
+- AI fit scoring:
+  Uses semantic matching and professional-signal analysis.
+- Recruiter-style output:
+  Returns candidate classification (for example, `Qualified and Verified`), credibility summary, strategic signals, and explainable checks.
+- Noise suppression:
+  Hobbies/extracurricular text cannot reduce professional fit score; culture-fit is additive only.
+- Authenticated dashboard:
+  Sign in to use the verification workspace.
 
 ## Project Structure
 
@@ -15,45 +28,47 @@ TruVerify is a decentralized credential verification and AI semantic matching sy
 contracts/
   TruVerifySeal.sol
 ai/
+  authenticity.py
   matcher.py
 backend/
-  abi/TruVerifySeal.json
+  abi/
+    TruVerifySeal.json
   static/
     app.js
+    auth.css
     styles.css
   templates/
     index.html
+    signin.html
+    signup.html
+    settings.html
+    logout.html
   main.py
-.env.example
+scripts/
+  deploy_local.py
+  issue_sample_cert.py
+sample_data/
 requirements.txt
+.env.example
 ```
 
-## 1) Deploy the Smart Contract
+## API Routes
 
-You can deploy `contracts/TruVerifySeal.sol` to any EVM testnet (e.g., Sepolia) using Remix or Hardhat.
+- `POST /api/verify-and-match`
+- `POST /verify` (compatibility alias; same logic as `/api/verify-and-match`)
+- `GET /api/demo`
+- `GET /api/health`
 
-Contract features:
+## Auth Routes
 
-- `issueCertificate(bytes32 certificateHash, address studentWallet)`
-- `verifyCertificate(bytes32 certificateHash)`
-- Unique+immutable hash enforcement through mapping + existence guard.
+- `GET/POST /signup`
+- `GET/POST /signin`
+- `GET/POST /settings`
+- `GET /logout`
 
-After deployment, copy the contract address.
+## Local Setup
 
-## 2) Configure Environment
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env`:
-
-```env
-RPC_URL=https://your-rpc-url
-CONTRACT_ADDRESS=0xYourDeployedContractAddress
-```
-
-## 3) Install Dependencies
+### 1) Create and Activate Virtual Environment
 
 ```bash
 python -m venv .venv
@@ -61,48 +76,79 @@ python -m venv .venv
 .venv\Scripts\activate
 # macOS/Linux
 source .venv/bin/activate
+```
 
+### 2) Install Dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-## 4) Run the API + Frontend
+### 3) Configure Environment
 
-From project root:
+Create `.env` from `.env.example` and set values:
+
+```env
+RPC_URL=http://127.0.0.1:8545
+CONTRACT_ADDRESS=0xYourContractAddress
+APP_SECRET_KEY=replace-with-a-random-secret
+```
+
+### 4) Start Local Blockchain (Ganache)
 
 ```bash
-uvicorn backend.main:app --reload
+npx ganache --server.port 8545 --wallet.mnemonic "test test test test test test test test test test test junk" --chain.chainId 31337
+```
+
+### 5) Deploy Contract Locally
+
+```bash
+python scripts/deploy_local.py
+```
+
+Copy printed `CONTRACT_ADDRESS=...` into `.env`.
+
+### 6) (Optional) Issue Sample Certificate
+
+```bash
+python scripts/issue_sample_cert.py
+```
+
+### 7) Run App
+
+Windows (Git Bash-safe command):
+
+```bash
+C:/Users/<your-user>/AppData/Local/Programs/Python/Python312/python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8001
+```
+
+or generic command:
+
+```bash
+uvicorn backend.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
 Open:
 
-- `http://127.0.0.1:8000/`
+- `http://127.0.0.1:8001/`
 
-## 5) End-to-End Flow
+## End-to-End Flow
 
-1. Upload a PDF CV.
-2. API computes SHA-256 hash.
-3. API calls smart contract `verifyCertificate` with hash.
-4. If verified, API extracts text and computes CV↔JD semantic match.
-5. UI displays verification result and score.
+1. User signs in.
+2. Upload PDF CV and provide Job Description.
+3. Backend computes SHA-256 and verifies on blockchain.
+4. If verified, backend extracts CV text and runs recruiter scoring.
+5. UI shows AI match, strategic signals, and authenticity summary.
 
-## Example: Certificate Hash Input to Contract
+## Important Behavior Notes
 
-If your backend computed:
+- Blockchain verification confirms document hash integrity on ledger.
+- It does not independently verify each claim against third-party issuers unless an issuer workflow is integrated.
+- Current app includes demo-friendly auto-seal behavior in backend verification flow; disable it for strict production enforcement.
 
-```text
-4d8f...ab12  (64 hex chars)
-```
+## Production Recommendations
 
-It is sent on-chain as:
-
-```text
-0x4d8f...ab12
-```
-
-which maps to `bytes32` in Solidity.
-
-## Notes
-
-- For production, add authentication and role management for issuer APIs.
-- Consider storing certificate metadata in IPFS and anchoring CID hash on-chain.
-- Large transformer models can be memory-intensive; use a worker queue for high throughput.
+- Restrict certificate issuance to authorized issuer roles.
+- Disable auto-seal in verify flow.
+- Rotate strong `APP_SECRET_KEY` and issuer private keys.
+- Add tests for `ai/matcher.py` and `ai/authenticity.py` scoring behavior.
